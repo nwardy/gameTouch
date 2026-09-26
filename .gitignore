@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+
+# Scratch / generated
+data/tmp/
+*.mp4
+*.mov
+*.avi
+
+# Keep sample trajectory + directory placeholders, ignore generated data
+data/trajectories/*
+!data/trajectories/.gitkeep
+!data/trajectories/sample.json
+data/calibration/*
+!data/calibration/.gitkeep
