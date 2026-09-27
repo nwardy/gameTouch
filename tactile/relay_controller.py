@@ -89,6 +89,16 @@ class RelayController:
         self._active_pins = set(ALL_RELAY_PINS)
         self.current_cell = "all"
 
+    def pulse_side(self, side):
+        """Energize the court-edge column for the tennis point winner."""
+        if side not in ("near", "far"):
+            raise ValueError("side must be 'near' or 'far'")
+        self.all_off()
+        for pin in ROW_PINS:
+            self.relay_on(pin)
+        self.relay_on(COLUMN_PINS[0 if side == "near" else -1])
+        self.current_cell = f"side:{side}"
+
     # -- high level --------------------------------------------------------
     def select_cell(self, row, column):
         """Activate the relay pair for a 1-based (row, column).

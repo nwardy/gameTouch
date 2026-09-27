@@ -19,6 +19,7 @@ from config import (
 )
 from tactile.grid_mapper import field_to_cell
 from tracking.goal_detection import is_goal_position
+from sports import get_sport
 
 
 _FIELD_MARGIN = 28
@@ -34,7 +35,7 @@ _SENSOR_RING = (235, 248, 252)
 _GRID_LINE = (126, 167, 138)
 
 
-def render_birdseye_video(video, position_source, output_path, speed=1.0):
+def render_birdseye_video(video, position_source, output_path, speed=1.0, sport="soccer"):
     """Write an MP4 showing ball position and the active tactile sensor.
 
     A ``None`` position intentionally produces no ball marker, preventing a
@@ -45,7 +46,8 @@ def render_birdseye_video(video, position_source, output_path, speed=1.0):
     output_path = next_available_output_path(output_path)
 
     canvas_width = max(video.width, 640)
-    field_height = canvas_width * FIELD_WIDTH_METERS / FIELD_LENGTH_METERS
+    profile = get_sport(sport)
+    field_height = canvas_width * profile.width_meters / profile.length_meters
     canvas_height = int(field_height + 2 * _FIELD_MARGIN + 64)
     if speed <= 0:
         raise ValueError("bird's-eye speed must be greater than zero")
@@ -70,7 +72,7 @@ def render_birdseye_video(video, position_source, output_path, speed=1.0):
 
             timestamp = video.frame_to_time(index)
             position = position_source.get_position(timestamp)
-            canvas, field_rect = _draw_field(canvas_width, canvas_height)
+            canvas, field_rect = _draw_field(canvas_width, canvas_height, sport=sport)
             active_cell = held_cell
             point = None
 
@@ -116,15 +118,18 @@ def next_available_output_path(requested_path):
     raise RuntimeError("could not find an unused output filename")
 
 
-def _draw_field(width, height):
+def _draw_field(width, height, sport="soccer"):
     canvas = np.full((height, width, 3), _BACKGROUND, dtype=np.uint8)
     x0, x1 = _FIELD_MARGIN, width - _FIELD_MARGIN
     y0, y1 = 64, height - _FIELD_MARGIN
     cv2.rectangle(canvas, (x0, y0), (x1, y1), _TURF, -1)
     cv2.rectangle(canvas, (x0, y0), (x1, y1), _LINE, 2)
 
-    _draw_pitch_markings(canvas, (x0, y0, x1, y1))
-    _draw_goal_nets(canvas, (x0, y0, x1, y1))
+    if sport.startswith("tennis"):
+        _draw_tennis_markings(canvas, (x0, y0, x1, y1))
+    else:
+        _draw_pitch_markings(canvas, (x0, y0, x1, y1))
+        _draw_goal_nets(canvas, (x0, y0, x1, y1))
 
     return canvas, (x0, y0, x1, y1)
 
@@ -197,6 +202,21 @@ def _draw_box(canvas, point, x_start, depth, width):
     cv2.rectangle(canvas, point(x_start, y_start),
                   point(x_start + depth, y_start + width), _LINE, 2,
                   cv2.LINE_AA)
+
+
+def _draw_tennis_markings(canvas, field_rect):
+    """A doubles tennis court beneath the same 4x5 tactile sensor grid."""
+    x0, y0, x1, y1 = field_rect
+    net_x = round((x0 + x1) / 2)
+    cv2.line(canvas, (net_x, y0), (net_x, y1), _LINE, 2, cv2.LINE_AA)
+    # Service lines sit 6.40 m from the net on a 23.77 m court.
+    service_offset = 6.40 / 23.77 * (x1 - x0)
+    for x in (round(net_x - service_offset), round(net_x + service_offset)):
+        cv2.line(canvas, (x, y0), (x, y1), _LINE, 1, cv2.LINE_AA)
+    # Singles sidelines (8.23 m) inside doubles sidelines (10.97 m).
+    inset = (10.97 - 8.23) / 2 / 10.97 * (y1 - y0)
+    for y in (round(y0 + inset), round(y1 - inset)):
+        cv2.line(canvas, (x0, y), (x1, y), _LINE, 1, cv2.LINE_AA)
 
 
 def _draw_goal_nets(canvas, field_rect):

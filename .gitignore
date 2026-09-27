@@ -7,6 +7,8 @@ venv/
 
 # OS
 .DS_Store
+.env
+.env.local
 
 # Scratch / generated
 data/tmp/

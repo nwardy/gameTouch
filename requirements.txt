@@ -3,6 +3,7 @@
 opencv-contrib-python>=4.8
 numpy>=1.24
 pytest>=7.0
+certifi>=2024.0.0
 
 # On the Jetson, additionally install Jetson.GPIO (see scripts/deploy.sh).
 # Do NOT install Jetson.GPIO on macOS.

@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from fan_pulse import FanPulseService, fetch_recent_posts, summarize_with_grok
+from fan_pulse import FanPulseService, search_x_with_grok
 
 
 class _Response:
@@ -19,25 +19,40 @@ class _Response:
 
 
 @patch("fan_pulse.urlopen")
-def test_fetch_recent_posts_is_bounded_and_uses_bearer_auth(mock_open):
-    mock_open.return_value = _Response(json.dumps({"data": [{"text": "Great goal"}]}).encode())
-    assert fetch_recent_posts("Georgia Tech", "token", max_results=999) == ["Great goal"]
-    request = mock_open.call_args.args[0]
-    assert request.get_header("Authorization") == "Bearer token"
-    assert "max_results=100" in request.full_url
-
-
-@patch("fan_pulse.urlopen")
-def test_grok_summary_extracts_content(mock_open):
+def test_grok_x_search_uses_only_xai_key_and_returns_usage_count(mock_open):
     mock_open.return_value = _Response(json.dumps({
-        "choices": [{"message": {"content": "In this sample, fans are excited."}}]
+        "output_text": json.dumps({
+            "summary": "In this sample, fans are excited.", "intensity": 78, "level": "high",
+            "game_context": "A close match is in progress.", "event": "yellow_card",
+            "event_confidence": "high",
+        }),
+        "usage": {"server_side_tool_usage_details": {"x_posts_fetched": 12, "web_search_calls": 1}},
     }).encode())
-    assert summarize_with_grok(["What a finish"], "key") == "In this sample, fans are excited."
+    assert search_x_with_grok("Georgia Tech", "key") == {
+        "summary": "In this sample, fans are excited.", "intensity": 78, "level": "high",
+        "game_context": "A close match is in progress.", "event": "yellow_card",
+        "event_confidence": "high", "sampled_posts": 12, "web_searches": 1,
+    }
+    request = mock_open.call_args.args[0]
+    assert request.get_header("Authorization") == "Bearer key"
+    assert request.full_url.endswith("/responses")
+    payload = json.loads(request.data.decode())
+    assert payload["reasoning"] == {"effort": "low"}
+    assert payload["tools"] == [{"type": "web_search"}, {"type": "x_search"}]
 
 
 def test_service_reports_missing_credentials_without_network(monkeypatch):
-    monkeypatch.delenv("X_BEARER_TOKEN", raising=False)
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     service = FanPulseService("Georgia Tech")
-    service._run()
+    service._run_once()
     assert service.latest().error == "missing credentials"
+
+
+@patch("fan_pulse.urlopen", side_effect=TimeoutError("timed out"))
+def test_grok_x_search_turns_timeout_into_actionable_error(_mock_open):
+    try:
+        search_x_with_grok("Georgia Tech", "key")
+    except RuntimeError as error:
+        assert "45 seconds" in str(error)
+    else:
+        raise AssertionError("timeout should be reported as a RuntimeError")

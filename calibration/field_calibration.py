@@ -10,7 +10,8 @@ import cv2
 
 from calibration.homography import FieldHomography
 from calibration.calibration_timeline import CalibrationTimeline
-from config import CALIBRATION_DIR, FIELD_LENGTH_METERS, FIELD_WIDTH_METERS
+from config import CALIBRATION_DIR
+from sports import get_sport
 
 
 def calibration_path(name):
@@ -30,7 +31,7 @@ def save_calibration(calibration, name):
     print(f"Saved calibration -> {path}")
 
 
-def calibrate_from_frame(frame):
+def calibrate_from_frame(frame, sport_name="soccer"):
     """Pair visible image landmarks with field yards and save their homography.
 
     Controls: click a landmark, then enter its ``x,y`` yard coordinate in the
@@ -38,6 +39,7 @@ def calibrate_from_frame(frame):
     pair; ENTER saves; q/ESC aborts. Coordinate convention: x=0 is one goal
     line and x=105 the other; y=0 is the near touchline and y=68 the far.
     """
+    sport = get_sport(sport_name)
     image_points = []
     field_points = []
     window = "Field Calibration - click landmark, enter x,y in terminal"
@@ -45,7 +47,7 @@ def calibrate_from_frame(frame):
     def on_mouse(event, x, y, flags, param):
         if event != cv2.EVENT_LBUTTONDOWN:
             return
-        yard_point = _prompt_for_field_point(x, y)
+        yard_point = _prompt_for_field_point(x, y, sport)
         if yard_point is not None:
             image_points.append((x, y))
             field_points.append(yard_point)
@@ -78,7 +80,10 @@ def calibrate_from_frame(frame):
             break
 
     cv2.destroyWindow(window)
-    homography = FieldHomography.from_correspondences(image_points, field_points)
+    homography = FieldHomography.from_correspondences(
+        image_points, field_points, sport=sport.name,
+        field_length_meters=sport.length_meters, field_width_meters=sport.width_meters,
+    )
     errors = homography.calibration_error_meters()
     print(f"Calibration landmarks: {len(image_points)}; "
           f"mean reprojection error: {sum(errors) / len(errors):.2f} m")
@@ -136,12 +141,12 @@ def choose_shift_frame(video):
         cv2.destroyWindow(window)
 
 
-def _prompt_for_field_point(px, py):
+def _prompt_for_field_point(px, py, sport):
     """Read the field coordinate for the just-clicked image landmark."""
     while True:
         value = input(
             f"Clicked pixel ({px}, {py}). Enter pitch x,y metres "
-            f"(x=0..{FIELD_LENGTH_METERS:g}, y=0..{FIELD_WIDTH_METERS:g}) "
+            f"for {sport.name} (x=0..{sport.length_meters:g}, y=0..{sport.width_meters:g}) "
             "or blank to discard: "
         ).strip()
         if not value:
@@ -152,10 +157,10 @@ def _prompt_for_field_point(px, py):
         except ValueError:
             print("Use two numbers separated by a comma, for example: 52.5,34")
             continue
-        if not 0 <= field_x <= FIELD_LENGTH_METERS:
-            print("Pitch x must be between 0 and 105.")
+        if not 0 <= field_x <= sport.length_meters:
+            print(f"Court x must be between 0 and {sport.length_meters:g}.")
             continue
-        if not 0 <= field_y <= FIELD_WIDTH_METERS:
-            print("Pitch y must be between 0 and 68.")
+        if not 0 <= field_y <= sport.width_meters:
+            print(f"Court y must be between 0 and {sport.width_meters:g}.")
             continue
         return field_x, field_y

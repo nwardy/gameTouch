@@ -139,6 +139,15 @@ def test_explicit_goal_click_is_mapped_into_nearest_net_for_rendering():
     assert nearest_goal_net_position((0.88, 0.2))[0] > 1
 
 
+def test_tennis_calibration_uses_tennis_court_dimensions():
+    homography = FieldHomography.from_correspondences(
+        [(0, 0), (100, 0), (100, 100), (0, 100)],
+        [(0, 0), (23.77, 0), (23.77, 10.97), (0, 10.97)],
+        sport="tennis", field_length_meters=23.77, field_width_meters=10.97,
+    )
+    assert np.allclose(homography.pixel_to_meters(50, 50), (11.885, 5.485))
+
+
 def test_manual_points_interpolate_across_deliberate_longer_gap():
     source = PrerecordedSource([
         {"time": 0.0, "x": 0.2, "y": 0.3, "source": "manual_path"},

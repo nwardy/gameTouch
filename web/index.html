@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FieldSense Demo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="demo-page">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">FIELDSENSE</p>
+          <h1>Game replay</h1>
+          <p class="subtitle">Original footage and the generated field view.</p>
+        </div>
+        <p id="status-text" class="status" aria-live="polite">Ready</p>
+      </header>
+
+      <section class="stage" aria-label="Synchronized video replay">
+        <article id="original-card" class="video-card original-card">
+          <h2>Original footage</h2>
+          <label id="original-placeholder" class="video-placeholder">
+            <span>Select original game video</span>
+            <input id="original-upload" type="file" accept="video/*" />
+          </label>
+          <video id="original-video" muted playsinline preload="auto" hidden></video>
+          <p id="original-name" class="video-name">No file selected</p>
+        </article>
+        <article id="generated-card" class="video-card generated-card is-waiting">
+          <h2>Generated field view</h2>
+          <label id="generated-placeholder" class="video-placeholder">
+            <span>Select generated field-view video</span>
+            <input id="generated-upload" type="file" accept="video/*" />
+          </label>
+          <video id="generated-video" muted playsinline preload="auto" hidden></video>
+          <p id="generated-name" class="video-name">No file selected</p>
+        </article>
+      </section>
+
+      <section class="play-panel" aria-label="Playback control">
+        <button id="start-button" type="button" disabled>Play</button>
+        <button id="pause-button" class="pause-button" type="button" disabled>Pause</button>
+        <p id="cue-description">Load the film.</p>
+      </section>
+
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

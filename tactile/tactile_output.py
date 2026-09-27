@@ -23,6 +23,10 @@ class TactileOutput(ABC):
         """Optional celebration effect: energize every matrix line."""
         self.all_off()
 
+    def pulse_side(self, side):
+        """Pulse the selected court-side strip for a tennis point."""
+        self.controller.pulse_side(side)
+
     def setup(self):
         """Optional hardware init. No-op by default."""
 

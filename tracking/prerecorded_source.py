@@ -86,6 +86,12 @@ class PrerecordedSource(PositionSource):
                 return point["time"]
         return None
 
+    def events_between(self, start_time, end_time):
+        return [
+            point for point in self.points
+            if start_time < point["time"] <= end_time and point.get("event") == "tennis_point"
+        ]
+
 
 def trajectory_path(name):
     return os.path.join(TRAJECTORY_DIR, f"{name}.json")

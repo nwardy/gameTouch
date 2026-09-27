@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Run one real X -> Grok fan-pulse check without video or hardware.
+"""Run one real Grok X Search fan-pulse check without video or hardware.
 
 Example:
-    X_BEARER_TOKEN="..." XAI_API_KEY="..." \
-      ./.venv/bin/python scripts/test_fan_pulse_live.py --query "#GTvsUGA"
+    ./.venv/bin/python scripts/test_fan_pulse_live.py --query "#GTvsUGA"
 """
 
 import argparse
@@ -15,27 +14,29 @@ from pathlib import Path
 # Running this file directly puts scripts/ on sys.path, not the repository root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fan_pulse import fetch_recent_posts, summarize_with_grok
+from fan_pulse import load_local_env, search_x_with_grok
 
 
 def main():
+    load_local_env(Path(__file__).resolve().parents[1] / ".env")
     parser = argparse.ArgumentParser(
-        description="Fetch a small, current X-post sample and summarize it with Grok."
+        description="Use Grok X Search to summarize current fan reaction."
     )
     parser.add_argument("--query", required=True, help="X search query, such as '#GTvsUGA'")
-    parser.add_argument("--max-posts", type=int, default=20, help="X posts to sample (10 to 100)")
     args = parser.parse_args()
 
-    x_token = os.getenv("X_BEARER_TOKEN")
     grok_key = os.getenv("XAI_API_KEY")
-    if not x_token or not grok_key:
-        sys.exit("Set X_BEARER_TOKEN and XAI_API_KEY in this terminal before running the live test.")
+    if not grok_key:
+        sys.exit("Set XAI_API_KEY in .env before running the live test.")
 
-    print(f"Fetching up to {max(10, min(args.max_posts, 100))} recent X posts for: {args.query}")
+    print(f"Asking Grok X Search about: {args.query}")
     try:
-        posts = fetch_recent_posts(args.query, x_token, max_results=args.max_posts)
-        print(f"Sampled {len(posts)} post(s). Asking Grok for a cautious fan-pulse summary…\n")
-        print(summarize_with_grok(posts, grok_key))
+        result = search_x_with_grok(args.query, grok_key)
+        print(f"Used {result['web_searches']} live web search(es) and sampled {result['sampled_posts']} X post(s).\n")
+        print(f"Live game context: {result['game_context']}")
+        print(f"Soccer event: {result['event'].replace('_', ' ')} ({result['event_confidence']} confidence)")
+        print(f"Fan intensity: {result['intensity']}/100 ({result['level']})")
+        print(result["summary"])
     except RuntimeError as error:
         sys.exit(f"Live fan-pulse test failed: {error}")
 

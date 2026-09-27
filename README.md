@@ -10,6 +10,45 @@ synchronize with playback → deploy to Jetson → connect real relays → (late
 live processing. Efficiency and low latency come first; nothing here is
 over-engineered.
 
+## Presentation control room
+
+For a polished demo, run the local browser control page on the presentation
+laptop:
+
+```bash
+python3 scripts/make_web_demo_assets.py
+python3 demo_server.py
+```
+
+Open `http://localhost:8000`. It shows the original game footage and the
+precomputed bird's-eye/field-view video side by side. You can replace either
+panel with a local video file using the upload controls. Those uploads stay in
+the browser tab so the page never silently copies a large video anywhere.
+The asset script makes a browser-safe WebM copy of the selected generated MP4;
+it does not change the original output used by the Python/Jetson pipeline.
+
+For a browser-only rehearsal, opening `web/index.html` directly also works:
+the button plays both local videos together. Run `demo_server.py` only when
+you want the button to send the shared start cue to a Jetson.
+
+The Start button creates one shared timestamp after a five-second countdown.
+That gives the browser and a Jetson on the local network time to arm;
+for this prototype, describe it as a **synchronized replay**, not live video
+generation. The displayed field view is generated before the demo.
+
+On the Jetson, copy the same source video and its saved trajectory/calibration,
+then leave this client running before the presentation:
+
+```bash
+python3 jetson_demo_client.py \
+  --server http://PRESENTATION_LAPTOP_IP:8000 \
+  --video /path/to/soccer.mp4 --name soccer-fixed-view
+```
+
+Use `--mock-hardware` to rehearse the cue without GPIO. The client starts
+`main.py --hardware` at the same server-selected timestamp; `main.py` remains
+the source of truth for timestamp-to-tactile-cell synchronization.
+
 ## Contributor
 
 Current project contributor: **lollipop999**.
@@ -22,19 +61,44 @@ It runs in a background thread, so a network delay never pauses the tactile
 experience. The summary is a sample of online reaction—not a fact about all
 fans—and it avoids usernames and repeating harmful content.
 
-Set credentials in the shell; never commit them to this repository:
+Copy `.env.example` to `.env`, then paste your xAI key into its one value. `.env`
+is ignored by Git and is loaded only on your own machine; never commit or paste
+the actual keys into chat, source files, or screenshots.
 
 ```bash
-export X_BEARER_TOKEN="your X API bearer token"
-export XAI_API_KEY="your xAI API key"
-python3 main.py --video example.mp4 --name game1 --mock-hardware \
-  --fan-query "#GTvsUGA OR Georgia Tech OR Georgia Bulldogs"
+cp .env.example .env
 ```
 
-Use a precise matchup hashtag or team names, and adjust `--fan-pulse-interval`
-only with the X API access level and rate limits in mind. The same `FanPulse`
-object is printed as each update arrives for a terminal screen reader, and can
-also be sent to text-to-speech in a dedicated accessible-player UI.
+Grok's server-side X Search retrieves the public X-post sample, so you do not need an X developer account or X bearer token. It also uses web search for live game context when a reliable score source is available. Use a precise matchup hashtag or team names. While the video window is focused,
+press **F** to request one summary. The video and tactile grid keep running
+while the request happens in the background. The overlay and terminal show a
+live game-context line, a 0–100 fan-intensity score, and an accessible explanation.
+Web-derived game context and X-derived fan reaction remain separate; neither is
+treated as an official sports-data feed.
+
+### Soccer event patterns
+
+When Grok finds a soccer event in reliable live web context with medium or high
+confidence, the board plays a short pattern once, then returns to following the
+ball cell. The debug view and terminal name the event and pattern. A
+low-confidence event never vibrates the board.
+
+| Event | Board pattern |
+| --- | --- |
+| Goal | Three full-board blinks |
+| Yellow card | Two short taps at the ball cell |
+| Red card | Two long full-board alerts |
+| Offside | Short then long tap at the ball cell |
+| Penalty awarded | One long plus two short taps at the ball cell |
+| Corner kick | Four quick taps at the ball cell |
+| Substitution | One long then one short tap at the ball cell |
+| VAR review | Two slow taps at the ball cell |
+
+On the Jetson, you can connect a normally-open momentary button between an
+unused BOARD-numbered GPIO pin and ground, then add `--hardware --fan-button-pin
+37` to the command. Pin 37 is only an example: check it does not conflict with
+your own wiring before using it. Pressing that button makes the same request as
+the **F** key.
 
 ### Test Grok and X without video or hardware
 
@@ -44,7 +108,7 @@ Run one live check with the same code path used during playback:
 ./.venv/bin/python scripts/test_fan_pulse_live.py --query "#GTvsUGA"
 ```
 
-It requires `X_BEARER_TOKEN` and `XAI_API_KEY` in the terminal environment.
+It requires only `XAI_API_KEY` in `.env`.
 The script prints only the post count and Grok's summary; it never prints either key or saves the posts.
 
 ---
@@ -245,6 +309,31 @@ python3 main.py --video example.mp4 --name game1 --mock-hardware \
 
 Add `--birdseye-speed 0.25` to export the same path at quarter speed for
 inspection.
+
+### Tennis mode
+
+Tennis is a separate 23.77 m × 10.97 m doubles-court profile. For a singles
+court use `--sport tennis-singles` (23.77 m × 8.23 m). Use a different name so
+soccer and tennis calibrations/paths remain separate:
+
+```bash
+python3 main.py --video tennis.mp4 --sport tennis --name tennis-match \
+  --calibrate --calibrate-only
+python3 main.py --video tennis.mp4 --sport tennis --name tennis-match \
+  --manual-path --mock-hardware \
+  --birdseye-output data/outputs/tennis-match.mp4
+```
+
+For an overhead tennis view, click court corners, service-line intersections,
+and the net/sideline intersections during calibration. In manual tennis mode,
+press `1` before clicking the ball to mark a point for the near side, or `2`
+for the far side. Replay then buzzes that side's court-edge sensor strip.
+Point ownership is deliberately manual: ball coordinates alone do not reliably
+determine tennis scoring.
+
+For a very fast, tiny tennis ball, use `--track-every-frame` and
+`--track-full-resolution`. This is slower to process offline, but preserves
+more ball detail than the default efficient soccer settings.
 
 Exports never replace an existing MP4. If `game1-birdseye.mp4` already exists,
 the next export is saved as `game1-birdseye-001.mp4`, then `-002.mp4`, and so

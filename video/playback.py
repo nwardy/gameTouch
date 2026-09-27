@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from tactile.grid_mapper import CellDebouncer, cell_to_center
+from tactile.event_patterns import description_for, run_event_pattern
 from config import (
     FIELD_LENGTH_METERS,
     FIELD_WIDTH_METERS,
@@ -48,7 +49,7 @@ class _EMA:
 
 
 def play(video, position_source, tactile_output, calibration=None,
-         debug=DEBUG_VISUAL, realtime=True, fan_pulse=None):
+         debug=DEBUG_VISUAL, realtime=True, fan_pulse=None, sport="soccer"):
     """Play `video` in sync with `position_source`, driving `tactile_output`.
 
     Returns normally at end of clip. Caller is responsible for tactile cleanup
@@ -61,12 +62,19 @@ def play(video, position_source, tactile_output, calibration=None,
 
     start_wall = time.time()
     completed = False
+    previous_timestamp = -0.001
+    last_fan_update = None
     while True:
         idx, frame = video.read_next()
         if frame is None:
             completed = True
             break
         timestamp = video.frame_to_time(idx)
+
+        if sport.startswith("tennis"):
+            for event in _events_between(position_source, previous_timestamp, timestamp):
+                tactile_output.pulse_side(event["side"])
+        previous_timestamp = timestamp
 
         pos = position_source.get_position(timestamp)
         cell = None
@@ -82,14 +90,26 @@ def play(video, position_source, tactile_output, calibration=None,
                 _log(timestamp, field, cell)
                 last_logged_cell = cell
 
+        pulse = fan_pulse.latest() if fan_pulse else None
+        if pulse and pulse.updated_at != last_fan_update and pulse.event not in (None, "none"):
+            last_fan_update = pulse.updated_at
+            if pulse.event_confidence in ("medium", "high"):
+                if run_event_pattern(tactile_output, pulse.event, cell):
+                    print(f"TACTILE EVENT: {pulse.event} — {description_for(pulse.event)}")
+            else:
+                print(f"Grok event not pulsed: {pulse.event} has low confidence.")
+
         if debug:
-            pulse = fan_pulse.latest() if fan_pulse else None
             homography = _homography_for(calibration, frame, timestamp)
             disp = _draw_overlay(frame, field, cell, homography, timestamp, pulse)
             cv2.imshow(window, disp)
             # pace to real time relative to video fps
-            if _wait_and_maybe_quit(video, idx, start_wall, realtime):
+            action = _wait_for_action(video, idx, start_wall, realtime)
+            if action == "quit":
                 break
+            if action == "fan" and fan_pulse:
+                if not fan_pulse.request_refresh():
+                    print("Fan pulse is already checking posts.")
 
     if debug:
         cv2.destroyWindow(window)
@@ -100,6 +120,11 @@ def play(video, position_source, tactile_output, calibration=None,
 def _goal_time(position_source):
     getter = getattr(position_source, "goal_time", None)
     return getter() if getter else None
+
+
+def _events_between(position_source, start_time, end_time):
+    getter = getattr(position_source, "events_between", None)
+    return getter(start_time, end_time) if getter else []
 
 
 def _celebrate_goal(tactile_output):
@@ -128,15 +153,19 @@ def _log(timestamp, field, cell):
 # ---------------------------------------------------------------------------
 # timing
 # ---------------------------------------------------------------------------
-def _wait_and_maybe_quit(video, idx, start_wall, realtime):
-    """Show frame for the right duration; return True if user pressed q/ESC."""
+def _wait_for_action(video, idx, start_wall, realtime):
+    """Show frame for the right duration; return quit, fan, or None."""
     if realtime:
         target = start_wall + video.frame_to_time(idx)
         delay_ms = max(1, int((target - time.time()) * 1000))
     else:
         delay_ms = 1
     key = cv2.waitKey(delay_ms) & 0xFF
-    return key in (ord("q"), 27)
+    if key in (ord("q"), 27):
+        return "quit"
+    if key in (ord("f"), ord("F")):
+        return "fan"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -176,13 +205,23 @@ def _draw_overlay(frame, field, cell, homography, timestamp, fan_pulse=None):
                     (12, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                     (0, 220, 255), 2)
     if fan_pulse is not None:
-        _draw_fan_pulse(disp, fan_pulse.text, h)
+        _draw_fan_pulse(disp, fan_pulse, h)
     return disp
 
 
-def _draw_fan_pulse(disp, text, frame_height):
-    """Keep the visual debug cue brief; the same text can be spoken by a UI."""
-    words = text.split()
+def _draw_fan_pulse(disp, pulse, frame_height):
+    """Render a compact readable fan summary for the video debug view."""
+    if pulse.intensity is None:
+        heading = "FAN PULSE: ready — press F to ask"
+        color = (185, 185, 185)
+    else:
+        heading = f"FAN INTENSITY: {pulse.intensity}/100 ({pulse.level.upper()})"
+        color = {"quiet": (140, 220, 130), "building": (80, 210, 245),
+                 "high": (60, 150, 255), "urgent": (70, 70, 255)}.get(pulse.level, (255, 255, 255))
+    event_line = "No confirmed soccer event." if pulse.event in (None, "none") else (
+        f"Grok event: {pulse.event.replace('_', ' ')} — {description_for(pulse.event)}."
+    )
+    words = f"{event_line} Game: {pulse.game_context or 'Checking live game context.'} Crowd: {pulse.text}".split()
     lines, line = [], ""
     for word in words:
         candidate = f"{line} {word}".strip()
@@ -193,10 +232,13 @@ def _draw_fan_pulse(disp, text, frame_height):
             line = candidate
     if line:
         lines.append(line)
-    y = max(110, frame_height - 18 * len(lines) - 12)
-    for line in lines[:3]:
-        cv2.putText(disp, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                    (255, 255, 255), 1)
+    lines = lines[:3]
+    y = max(110, frame_height - 18 * (len(lines) + 1) - 18)
+    cv2.rectangle(disp, (6, y - 18), (min(disp.shape[1] - 6, 770), frame_height - 6), (20, 20, 20), -1)
+    cv2.putText(disp, heading, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 2)
+    y += 18
+    for line in lines:
+        cv2.putText(disp, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
         y += 18
 
 

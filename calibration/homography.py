@@ -17,13 +17,18 @@ from config import FIELD_LENGTH_METERS, FIELD_WIDTH_METERS
 
 
 class FieldHomography:
-    def __init__(self, matrix, corners=None, image_points=None, field_points=None):
+    def __init__(self, matrix, corners=None, image_points=None, field_points=None,
+                 sport="soccer", field_length_meters=FIELD_LENGTH_METERS,
+                 field_width_meters=FIELD_WIDTH_METERS):
         self.matrix = np.asarray(matrix, dtype=np.float64)
         # ``corners`` is retained for old calibration files and the debug
         # outline.  New calibrations use arbitrary visible landmarks instead.
         self.corners = corners
         self.image_points = image_points or corners
         self.field_points = field_points
+        self.sport = sport
+        self.field_length_meters = field_length_meters
+        self.field_width_meters = field_width_meters
 
     @classmethod
     def from_corners(cls, corners):
@@ -41,7 +46,9 @@ class FieldHomography:
                    ])
 
     @classmethod
-    def from_correspondences(cls, image_points, field_points_meters):
+    def from_correspondences(cls, image_points, field_points_meters,
+                             sport="soccer", field_length_meters=FIELD_LENGTH_METERS,
+                             field_width_meters=FIELD_WIDTH_METERS):
         """Build a field map from >=4 visible pixel-to-yard correspondences.
 
         ``field_points_meters`` uses x=0..105 from one goal line to the other
@@ -56,14 +63,14 @@ class FieldHomography:
 
         src = np.asarray(image_points, dtype=np.float32)
         meters = np.asarray(field_points_meters, dtype=np.float32)
-        if np.any(meters[:, 0] < 0) or np.any(meters[:, 0] > FIELD_LENGTH_METERS):
-            raise ValueError("field x coordinates must be between 0 and 105 metres")
-        if np.any(meters[:, 1] < 0) or np.any(meters[:, 1] > FIELD_WIDTH_METERS):
-            raise ValueError("field y coordinates must be between 0 and 68 metres")
+        if np.any(meters[:, 0] < 0) or np.any(meters[:, 0] > field_length_meters):
+            raise ValueError("field x coordinate is outside this sport's court")
+        if np.any(meters[:, 1] < 0) or np.any(meters[:, 1] > field_width_meters):
+            raise ValueError("field y coordinate is outside this sport's court")
 
         dst = meters.copy()
-        dst[:, 0] /= FIELD_LENGTH_METERS
-        dst[:, 1] /= FIELD_WIDTH_METERS
+        dst[:, 0] /= field_length_meters
+        dst[:, 1] /= field_width_meters
         matrix, _inliers = cv2.findHomography(src, dst, cv2.RANSAC, 0.02)
         if matrix is None:
             raise ValueError("could not calculate a field homography")
@@ -72,6 +79,9 @@ class FieldHomography:
             matrix,
             image_points=[list(map(float, point)) for point in image_points],
             field_points=[list(map(float, point)) for point in field_points_meters],
+            sport=sport,
+            field_length_meters=field_length_meters,
+            field_width_meters=field_width_meters,
         )
 
     def pixel_to_field(self, px, py):
@@ -88,7 +98,7 @@ class FieldHomography:
         if field is None:
             return None
         u, v = field
-        return u * FIELD_LENGTH_METERS, v * FIELD_WIDTH_METERS
+        return u * self.field_length_meters, v * self.field_width_meters
 
     @staticmethod
     def is_on_field(field, tolerance=0.03):
@@ -121,6 +131,9 @@ class FieldHomography:
             "corners": self.corners,
             "image_points": self.image_points,
             "field_points": self.field_points,
+            "sport": self.sport,
+            "field_length_meters": self.field_length_meters,
+            "field_width_meters": self.field_width_meters,
         }
 
     @classmethod
@@ -130,6 +143,9 @@ class FieldHomography:
             corners=data.get("corners"),
             image_points=data.get("image_points"),
             field_points=data.get("field_points"),
+            sport=data.get("sport", "soccer"),
+            field_length_meters=data.get("field_length_meters", FIELD_LENGTH_METERS),
+            field_width_meters=data.get("field_width_meters", FIELD_WIDTH_METERS),
         )
 
     @classmethod

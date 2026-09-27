@@ -41,3 +41,6 @@ class MockTactileOutput(TactileOutput):
         self.current_cell = "all"
         if not self.quiet:
             print("ACTIVE CELL: (all 20 sensors on)")
+
+    def pulse_side(self, side):
+        print(f"TENNIS POINT: {side} side buzz")

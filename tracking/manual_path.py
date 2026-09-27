@@ -6,7 +6,7 @@ from config import FIELD_LENGTH_METERS, FIELD_WIDTH_METERS
 from tracking.goal_detection import is_goal_position, nearest_goal_net_position
 
 
-def annotate_manual_path(video, calibration, initial_points=None):
+def annotate_manual_path(video, calibration, initial_points=None, sport="soccer"):
     """Let the user click the ball over time and return a saved-path payload.
 
     The annotation is deliberately point-based rather than a freehand line:
@@ -20,6 +20,7 @@ def annotate_manual_path(video, calibration, initial_points=None):
     # scoring frame or add the final goal event.
     points = [dict(point) for point in (initial_points or [])]
     goal_click_armed = {"value": False}
+    point_side_armed = {"value": None}
 
     def record_click(event, px, py, _flags, _param):
         if event != cv2.EVENT_LBUTTONDOWN:
@@ -39,13 +40,17 @@ def annotate_manual_path(video, calibration, initial_points=None):
             "time": round(timestamp, 3),
             "x": round(u, 4),
             "y": round(v, 4),
-            "x_meters": round(u * FIELD_LENGTH_METERS, 2),
-            "y_meters": round(v * FIELD_WIDTH_METERS, 2),
+            "x_meters": round(u * homography.field_length_meters, 2),
+            "y_meters": round(v * homography.field_width_meters, 2),
             "tracking_status": "manual",
             "source": "manual_path",
         }
         if is_goal:
             point["event"] = "goal"
+        if point_side_armed["value"]:
+            point["event"] = "tennis_point"
+            point["side"] = point_side_armed["value"]
+            point_side_armed["value"] = None
         points[:] = [item for item in points if item["time"] != point["time"]]
         points.append(point)
         label = " GOAL" if is_goal else ""
@@ -89,6 +94,9 @@ def annotate_manual_path(video, calibration, initial_points=None):
             elif key == ord("g"):
                 goal_click_armed["value"] = True
                 print("Goal click armed: click the ball in the net. Annotation continues.")
+            elif sport.startswith("tennis") and key in (ord("1"), ord("2")):
+                point_side_armed["value"] = "near" if key == ord("1") else "far"
+                print(f"Tennis point armed for {point_side_armed['value']} side; click ball.")
             elif playing:
                 current_index = min(current_index + 1, video.frame_count - 1)
                 if current_index == video.frame_count - 1:
