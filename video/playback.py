@@ -15,11 +15,16 @@ import numpy as np
 
 from tactile.grid_mapper import CellDebouncer, cell_to_center
 from config import (
+    FIELD_LENGTH_METERS,
+    FIELD_WIDTH_METERS,
     GRID_ROWS,
     GRID_COLS,
     EMA_ALPHA,
     DEBUG_VISUAL,
     LOG_ON_CHANGE_ONLY,
+    GOAL_CELEBRATION_BLINKS,
+    GOAL_CELEBRATION_BLINK_SECONDS,
+    GOAL_CELEBRATION_DELAY_SECONDS,
 )
 from tactile.relay_config import ROW_PINS, COLUMN_PINS
 
@@ -42,8 +47,8 @@ class _EMA:
         return self.x, self.y
 
 
-def play(video, position_source, tactile_output, homography=None,
-         debug=DEBUG_VISUAL, realtime=True):
+def play(video, position_source, tactile_output, calibration=None,
+         debug=DEBUG_VISUAL, realtime=True, fan_pulse=None):
     """Play `video` in sync with `position_source`, driving `tactile_output`.
 
     Returns normally at end of clip. Caller is responsible for tactile cleanup
@@ -55,9 +60,11 @@ def play(video, position_source, tactile_output, homography=None,
     window = "Tactile Field - debug"
 
     start_wall = time.time()
+    completed = False
     while True:
         idx, frame = video.read_next()
         if frame is None:
+            completed = True
             break
         timestamp = video.frame_to_time(idx)
 
@@ -76,7 +83,9 @@ def play(video, position_source, tactile_output, homography=None,
                 last_logged_cell = cell
 
         if debug:
-            disp = _draw_overlay(frame, field, cell, homography, timestamp)
+            pulse = fan_pulse.latest() if fan_pulse else None
+            homography = _homography_for(calibration, frame, timestamp)
+            disp = _draw_overlay(frame, field, cell, homography, timestamp, pulse)
             cv2.imshow(window, disp)
             # pace to real time relative to video fps
             if _wait_and_maybe_quit(video, idx, start_wall, realtime):
@@ -84,6 +93,23 @@ def play(video, position_source, tactile_output, homography=None,
 
     if debug:
         cv2.destroyWindow(window)
+    if completed and _goal_time(position_source) is not None:
+        _celebrate_goal(tactile_output)
+
+
+def _goal_time(position_source):
+    getter = getattr(position_source, "goal_time", None)
+    return getter() if getter else None
+
+
+def _celebrate_goal(tactile_output):
+    """Wait, then flash every sensor three times after a manual goal point."""
+    time.sleep(GOAL_CELEBRATION_DELAY_SECONDS)
+    for _ in range(GOAL_CELEBRATION_BLINKS):
+        tactile_output.all_on()
+        time.sleep(GOAL_CELEBRATION_BLINK_SECONDS)
+        tactile_output.all_off()
+        time.sleep(GOAL_CELEBRATION_BLINK_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +142,7 @@ def _wait_and_maybe_quit(video, idx, start_wall, realtime):
 # ---------------------------------------------------------------------------
 # overlay
 # ---------------------------------------------------------------------------
-def _draw_overlay(frame, field, cell, homography, timestamp):
+def _draw_overlay(frame, field, cell, homography, timestamp, fan_pulse=None):
     disp = frame.copy()
     h, w = disp.shape[:2]
 
@@ -127,6 +153,7 @@ def _draw_overlay(frame, field, cell, homography, timestamp):
 
     # 4x5 grid drawn in image space using the inverse homography, so it lines
     # up with the actual field. Falls back to a plain screen grid if no calib.
+    _draw_yard_grid(disp, homography)
     _draw_grid(disp, homography, cell, w, h)
 
     # Ball marker (map normalized back to pixels if we can).
@@ -142,7 +169,35 @@ def _draw_overlay(frame, field, cell, homography, timestamp):
     if cell is not None:
         cv2.putText(disp, f"Row {cell[0]}  Column {cell[1]}", (12, 54),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    if field is not None:
+        cv2.putText(disp,
+                    f"ball: {field[0] * FIELD_LENGTH_METERS:.1f} m, "
+                    f"{field[1] * FIELD_WIDTH_METERS:.1f} m across",
+                    (12, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (0, 220, 255), 2)
+    if fan_pulse is not None:
+        _draw_fan_pulse(disp, fan_pulse.text, h)
     return disp
+
+
+def _draw_fan_pulse(disp, text, frame_height):
+    """Keep the visual debug cue brief; the same text can be spoken by a UI."""
+    words = text.split()
+    lines, line = [], ""
+    for word in words:
+        candidate = f"{line} {word}".strip()
+        if len(candidate) > 70:
+            lines.append(line)
+            line = word
+        else:
+            line = candidate
+    if line:
+        lines.append(line)
+    y = max(110, frame_height - 18 * len(lines) - 12)
+    for line in lines[:3]:
+        cv2.putText(disp, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (255, 255, 255), 1)
+        y += 18
 
 
 def _draw_grid(disp, homography, active_cell, w, h):
@@ -168,6 +223,21 @@ def _draw_grid(disp, homography, active_cell, w, h):
             cv2.polylines(disp, [poly], True, color, thick)
 
 
+def _draw_yard_grid(disp, homography):
+    """Draw 10-yard field lines in the source video for calibration QA."""
+    if homography is None:
+        return
+    for meter in range(0, int(FIELD_LENGTH_METERS) + 1, 10):
+        u = meter / FIELD_LENGTH_METERS
+        start = _field_to_pixel(homography, (u, 0.0))
+        end = _field_to_pixel(homography, (u, 1.0))
+        if start is None or end is None:
+            continue
+        cv2.line(disp, start, end, (110, 90, 20), 1)
+        cv2.putText(disp, str(meter), start, cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4, (110, 90, 20), 1)
+
+
 def _field_to_pixel(homography, field):
     """Inverse of homography: normalized field (u, v) -> pixel (x, y)."""
     inv = np.linalg.inv(homography.matrix)
@@ -177,3 +247,11 @@ def _field_to_pixel(homography, field):
     if wgt == 0:
         return None
     return int(x / wgt), int(y / wgt)
+
+
+def _homography_for(calibration, frame, timestamp):
+    if calibration is None:
+        return None
+    if hasattr(calibration, "homography_for"):
+        return calibration.homography_for(frame, timestamp)
+    return calibration.homography_at(timestamp)

@@ -1,14 +1,10 @@
 """
 Field homography: map image pixels -> normalized field coordinates (0..1).
 
-The four calibrated field corners are supplied in this order:
-    corner 1: top-left      -> field (0, 0)
-    corner 2: top-right     -> field (1, 0)
-    corner 3: bottom-right  -> field (1, 1)
-    corner 4: bottom-left   -> field (0, 1)
-
-Keeping the destination as the unit square means pixel_to_field already returns
-the normalized coordinate the rest of the program expects.
+Calibration accepts four or more visible ground landmarks. Each image point is
+paired with its known soccer-pitch position in metres, so a broadcast view need
+not show the four outer corners. The saved mapping still returns normalized
+coordinates because the tactile system depends on that interface.
 """
 
 import json
@@ -17,21 +13,66 @@ import os
 import numpy as np
 import cv2
 
-# Destination = unit square, matching the corner order above.
-_DST = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
+from config import FIELD_LENGTH_METERS, FIELD_WIDTH_METERS
 
 
 class FieldHomography:
-    def __init__(self, matrix, corners=None):
+    def __init__(self, matrix, corners=None, image_points=None, field_points=None):
         self.matrix = np.asarray(matrix, dtype=np.float64)
-        self.corners = corners  # original pixel corners, for redraw/debug
+        # ``corners`` is retained for old calibration files and the debug
+        # outline.  New calibrations use arbitrary visible landmarks instead.
+        self.corners = corners
+        self.image_points = image_points or corners
+        self.field_points = field_points
 
     @classmethod
     def from_corners(cls, corners):
-        """corners: list of 4 (x, y) pixel points in TL, TR, BR, BL order."""
+        """Create a legacy full-field-corner calibration."""
         src = np.array(corners, dtype=np.float32)
-        matrix = cv2.getPerspectiveTransform(src, _DST)
-        return cls(matrix, corners=[list(map(float, c)) for c in corners])
+        dst = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
+        matrix = cv2.getPerspectiveTransform(src, dst)
+        points = [list(map(float, c)) for c in corners]
+        return cls(matrix, corners=points, image_points=points,
+                   field_points=[
+                       [0.0, 0.0],
+                       [FIELD_LENGTH_METERS, 0.0],
+                       [FIELD_LENGTH_METERS, FIELD_WIDTH_METERS],
+                       [0.0, FIELD_WIDTH_METERS],
+                   ])
+
+    @classmethod
+    def from_correspondences(cls, image_points, field_points_meters):
+        """Build a field map from >=4 visible pixel-to-yard correspondences.
+
+        ``field_points_meters`` uses x=0..105 from one goal line to the other
+        and y=0..68 from the near touchline to the far touchline. RANSAC
+        lets an extra accidental click be ignored instead of distorting the
+        complete field map.
+        """
+        if len(image_points) != len(field_points_meters):
+            raise ValueError("image and field point counts must match")
+        if len(image_points) < 4:
+            raise ValueError("at least four field landmarks are required")
+
+        src = np.asarray(image_points, dtype=np.float32)
+        meters = np.asarray(field_points_meters, dtype=np.float32)
+        if np.any(meters[:, 0] < 0) or np.any(meters[:, 0] > FIELD_LENGTH_METERS):
+            raise ValueError("field x coordinates must be between 0 and 105 metres")
+        if np.any(meters[:, 1] < 0) or np.any(meters[:, 1] > FIELD_WIDTH_METERS):
+            raise ValueError("field y coordinates must be between 0 and 68 metres")
+
+        dst = meters.copy()
+        dst[:, 0] /= FIELD_LENGTH_METERS
+        dst[:, 1] /= FIELD_WIDTH_METERS
+        matrix, _inliers = cv2.findHomography(src, dst, cv2.RANSAC, 0.02)
+        if matrix is None:
+            raise ValueError("could not calculate a field homography")
+
+        return cls(
+            matrix,
+            image_points=[list(map(float, point)) for point in image_points],
+            field_points=[list(map(float, point)) for point in field_points_meters],
+        )
 
     def pixel_to_field(self, px, py):
         """Map a pixel (px, py) to normalized field (u, v)."""
@@ -41,18 +82,58 @@ class FieldHomography:
             return None
         return float(u / w), float(v / w)
 
+    def pixel_to_meters(self, px, py):
+        """Map a pixel to (x, y) pitch metres, or None for an invalid point."""
+        field = self.pixel_to_field(px, py)
+        if field is None:
+            return None
+        u, v = field
+        return u * FIELD_LENGTH_METERS, v * FIELD_WIDTH_METERS
+
+    @staticmethod
+    def is_on_field(field, tolerance=0.03):
+        """Return whether a normalized point is plausibly on the field."""
+        if field is None:
+            return False
+        u, v = field
+        return -tolerance <= u <= 1 + tolerance and -tolerance <= v <= 1 + tolerance
+
+    def calibration_error_meters(self):
+        """Per-landmark mapping error in metres, useful for manual QA."""
+        if not self.image_points or not self.field_points:
+            return []
+        errors = []
+        for image_point, expected in zip(self.image_points, self.field_points):
+            actual = self.pixel_to_meters(*image_point)
+            errors.append(float(np.linalg.norm(np.asarray(actual) - expected)))
+        return errors
+
     # -- persistence -------------------------------------------------------
     def save(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            json.dump(
-                {"matrix": self.matrix.tolist(), "corners": self.corners},
-                f,
-                indent=2,
-            )
+            json.dump(self.to_dict(), f, indent=2)
+
+    def to_dict(self):
+        """Return a JSON-safe representation for single or segmented saves."""
+        return {
+            "matrix": self.matrix.tolist(),
+            "corners": self.corners,
+            "image_points": self.image_points,
+            "field_points": self.field_points,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            data["matrix"],
+            corners=data.get("corners"),
+            image_points=data.get("image_points"),
+            field_points=data.get("field_points"),
+        )
 
     @classmethod
     def load(cls, path):
         with open(path) as f:
             data = json.load(f)
-        return cls(data["matrix"], corners=data.get("corners"))
+        return cls.from_dict(data)

@@ -36,3 +36,8 @@ class MockTactileOutput(TactileOutput):
         if self.current_cell is not None and not self.quiet:
             print("ACTIVE CELL: (all off)")
         self.current_cell = None
+
+    def all_on(self):
+        self.current_cell = "all"
+        if not self.quiet:
+            print("ACTIVE CELL: (all 20 sensors on)")

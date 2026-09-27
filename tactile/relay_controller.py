@@ -80,6 +80,15 @@ class RelayController:
         self._active_pins = set()
         self.current_cell = None
 
+    def all_on(self):
+        """Energize every row and column for the goal-celebration effect."""
+        if GPIO is None or not self._is_setup:
+            return
+        for pin in ALL_RELAY_PINS:
+            GPIO.output(pin, self._level(True))
+        self._active_pins = set(ALL_RELAY_PINS)
+        self.current_cell = "all"
+
     # -- high level --------------------------------------------------------
     def select_cell(self, row, column):
         """Activate the relay pair for a 1-based (row, column).

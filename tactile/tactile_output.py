@@ -19,6 +19,10 @@ class TactileOutput(ABC):
     def all_off(self):
         ...
 
+    def all_on(self):
+        """Optional celebration effect: energize every matrix line."""
+        self.all_off()
+
     def setup(self):
         """Optional hardware init. No-op by default."""
 
@@ -47,6 +51,9 @@ class JetsonRelayTactileOutput(TactileOutput):
 
     def all_off(self):
         self.controller.all_off()
+
+    def all_on(self):
+        self.controller.all_on()
 
     def cleanup(self):
         self.controller.cleanup()

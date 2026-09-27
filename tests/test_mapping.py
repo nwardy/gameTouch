@@ -171,3 +171,10 @@ def test_invalid_cell_never_activates(controller_with_fake):
             c.select_cell(*bad)
         assert fake.events == []               # hardware untouched
         assert c.current_cell is None
+
+
+def test_all_on_energizes_every_relay_line(controller_with_fake):
+    c, fake, _ = controller_with_fake
+    c.all_on()
+    assert set(c._active_pins) == set(ROW_PINS + COLUMN_PINS)
+    assert all(fake.state[pin] == FakeGPIO.LOW for pin in ROW_PINS + COLUMN_PINS)
