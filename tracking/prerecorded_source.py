@@ -16,15 +16,20 @@ import json
 import os
 
 from tracking.position_source import PositionSource
-from config import TRAJECTORY_DIR
+from config import (
+    MANUAL_PATH_MAX_INTERPOLATION_GAP_SECONDS,
+    MAX_INTERPOLATION_GAP_SECONDS,
+    TRAJECTORY_DIR,
+)
 
 
 class PrerecordedSource(PositionSource):
-    def __init__(self, points):
+    def __init__(self, points, max_interpolation_gap=MAX_INTERPOLATION_GAP_SECONDS):
         # points: list of dicts with time/x/y, kept sorted by time.
         self.points = sorted(points, key=lambda p: p["time"])
         if not self.points:
             raise ValueError("trajectory is empty")
+        self.max_interpolation_gap = max_interpolation_gap
 
     # -- construction ------------------------------------------------------
     @classmethod
@@ -44,11 +49,10 @@ class PrerecordedSource(PositionSource):
     # -- lookup ------------------------------------------------------------
     def get_position(self, timestamp):
         pts = self.points
-        # Clamp to the ends of the known trajectory.
-        if timestamp <= pts[0]["time"]:
-            return pts[0]["x"], pts[0]["y"]
-        if timestamp >= pts[-1]["time"]:
-            return pts[-1]["x"], pts[-1]["y"]
+        # A missing ball must be unknown, not frozen at its first/last known
+        # location for the rest of the clip.
+        if timestamp < pts[0]["time"] or timestamp > pts[-1]["time"]:
+            return None
 
         # Binary-free linear scan is fine: trajectories are small. Find the
         # bracketing pair and interpolate.
@@ -56,6 +60,8 @@ class PrerecordedSource(PositionSource):
         for hi in pts[1:]:
             if timestamp <= hi["time"]:
                 span = hi["time"] - lo["time"]
+                if span > self._interpolation_limit(lo, hi):
+                    return None
                 frac = 0.0 if span == 0 else (timestamp - lo["time"]) / span
                 x = lo["x"] + (hi["x"] - lo["x"]) * frac
                 y = lo["y"] + (hi["y"] - lo["y"]) * frac
@@ -63,8 +69,22 @@ class PrerecordedSource(PositionSource):
             lo = hi
         return pts[-1]["x"], pts[-1]["y"]
 
+    def _interpolation_limit(self, lo, hi):
+        """Keep uncertain tracker gaps off, but join deliberate manual clicks."""
+        if lo.get("source") == "manual_path" and hi.get("source") == "manual_path":
+            return max(self.max_interpolation_gap,
+                       MANUAL_PATH_MAX_INTERPOLATION_GAP_SECONDS)
+        return self.max_interpolation_gap
+
     def duration(self):
         return self.points[-1]["time"]
+
+    def goal_time(self):
+        """Return the first manual goal timestamp, if this trajectory has one."""
+        for point in self.points:
+            if point.get("event") == "goal":
+                return point["time"]
+        return None
 
 
 def trajectory_path(name):
